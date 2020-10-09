@@ -1,18 +1,19 @@
-bin=scheduler
 
 CFLAGS += -Wall -g
-LDFLAGS +=
+LDLIBS += -lm
 
-src=scheduler.c workload.c file_format.c
-obj=$(src:.c=.o)
+all: process scheduler
 
-$(bin): $(obj)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(obj) -o $(bin)
+scheduler: scheduler.o file_format.o
+	$(CC) $(CFLAGS) $(LDLIBS) $^ -o $@
 
-scheduler.o: scheduler.c scheduler.h file_format.h workload.h
-workload.o: workload.c workload.h
+process: process.o
+	$(CC) $(CFLAGS) $(LDLIBS) $^ -o $@
+
+scheduler.o: scheduler.c scheduler.h file_format.h
 file_format.o: file_format.c file_format.h
+process.o: process.c
 
 clean:
-	rm -f $(bin) $(obj)
+	rm -f *.o scheduler process
 

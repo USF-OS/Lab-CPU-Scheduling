@@ -1,17 +1,17 @@
-# Lab 7: CPU Scheduling
+# CPU Scheduling
 
 In this lab, we'll be implementing CPU scheduling algorithms. We could actually design our own Linux kernel modules for this, but the complexity is extreme: CFS (Completely Fair Scheduling) is somewhere around 10,000 lines of code!
 
-Instead, we will implement our own *user-space* threading library. As we know, our processes are given a main thread of execution. We'll divide this single thread up across multiple virtual processes, and decide the order in which they run via our scheduling algorithms.
+Instead, we will implement our scheduler using signals: `SIGSTOP` and `SIGCONT`. These two signals allow us to start and stop processes, and we'll maintain context information to know which processes should be executed and provide scheduling metrics.
 
 Your mission for this lab is:
 1. Implement the scheduling algorithms below
 2. Add a new command line option that allows you to select the scheduler. For example, if you run `./scheduler fifo processes1.txt` then the FIFO algorithm will be used.
-3. Execution metrics. After the program finishes running, you'll print some stats about the execution.
+3. Scheduling metrics. After the program finishes running, you'll print some stats about the execution.
 
 ## Algorithms
 
-You will implement the following scheduling algorithms. **NOTE**: if there are ties (i.e., two processes are both valid candidates to run), use the index order of `sched_state->pcbs` array.
+You will implement the following scheduling algorithms. **NOTE**: if there are ties (i.e., two processes are both valid candidates to run), use the index order of `g_scheduler->pcbs` array.
 
 ### Basic
 This scheduler gives you an example implementation to base your other algorithms off of. It simply iterates through the list of processes, finds the next one that needs to be run, and then context switches to it.
@@ -104,9 +104,4 @@ Completion Order:
 
 ## Evaluation
 
-What is the best scheduling algorithm for the following process specification files? Provide rationale for your answer.
-
-1. processes1.txt -- (algorithm here), because X, Y, Z...
-2. processes2.txt -- (algorithm here), because X, Y, Z...
-3. processes3.txt -- (algorithm here), because X, Y, Z...
-4. processes4.txt -- (algorithm here), because X, Y, Z...
+What is the best scheduling algorithm based on these results? Edit this README file to add your response and explain your choice.

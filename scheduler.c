@@ -1,6 +1,7 @@
 #include "scheduler.h"
 
-#include <assert.h>
+#include <sys/time.h>
+#include <sys/wait.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,191 +12,170 @@
 #include <unistd.h>
 
 #include "file_format.h"
-#include "workload.h"
-
-/* Globals */
 
 /* Scheduler state information */
-struct scheduler_state g_sstate = { 0 };
+struct scheduler_state g_scheduler = { 0 };
 
-/* Whether an interrupt has been received */
-bool g_interrupt = false;
-
-/* How big the simulated "workload" for the tasks should be. We calibrate our
- * workload based on rough CPU performance estimates. That way the code should
- * run in *roughly* the same amount of time regardless of hardware. */
-unsigned long g_workload_clocks = 0;
-
-/* Context of the main function: */
-ucontext_t g_main_ctx;
+/* Flag that gets set when we've received an interrupt */
+int g_interrupted = SIGALRM;
 
 /* Function pointer to the scheduling algorithm implementation: */
-void (*g_scheduling_algo)(struct scheduler_state *sched_state) = NULL;
-
-/* Constants for printing out the process status bars */
-static const char *hashes = "####################";
-static const char *spaces = "                    ";
-
+void (*g_scheduling_algorithm)(struct scheduler_state *sched_state) = NULL;
 
 /**
- * Performs a user-level context switch. This allows us to have multiple
- * "threads of execution" in our programs without actually using multiple OS
- * processes/threads.
- *
- * Input:
- * - pid: The process id, which is an index into the g_sstate.pcbs array of
- *   process control blocks.
+ * Retrieves the current UNIX time, in seconds.
  */
-void context_switch(int pid)
+double get_time(void)
 {
-    /* Ensure that we don't try to switch to a process that doesn't exist: */
-    assert(pid >= 0);
-    assert(pid < g_sstate.num_processes);
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec + tv.tv_usec / 1000000.0;
+}
 
-    struct process_ctl_block *pcb = &g_sstate.pcbs[pid];
-    struct process_ctl_block *old_pcb = current_pcb();
-
-    /* Reset our alarm "interrupt" to fire again in 1 second: */
-    alarm(1);
-
-    if (pcb == old_pcb && g_sstate.current_quantum > 0) {
-        /* We are context switching to the same process. Simply set its state
-         * back to running and return; this will jump us back to the process
-         * execution context. */
-        pcb->state = RUNNING;
-        g_sstate.current_quantum++;
-        return;
-    }
-
-    ucontext_t *old_ctx = &old_pcb->context;
-    if (g_sstate.current_quantum == 0 || old_pcb->state == TERMINATED) {
-        /* Handle cases where there is no previous or "old" context to go back
-         * to. This happens for the first run-through, as well as any time a job
-         * terminates and ends up down in the main() loop. */
-        old_ctx = &g_main_ctx;
+/**
+ * Switches the running context to a different process.
+ */
+void context_switch(struct process_ctl_block *pcb)
+{
+    if (pcb->start_time == 0) {
+        pcb->start_time = get_time();
     }
 
     pcb->state = RUNNING;
     /* Update global state variables: */
-    g_sstate.current_process = pid;
-    g_sstate.current_quantum++;
+    g_scheduler.current_process = pcb;
+    g_scheduler.current_quantum++;
 
-    /* Do the context switch with the swapcontext() function: */
-    printf("[i] Context switch: PID %d -> PID %d\n", old_pcb->pid, pid);
-    int result = swapcontext(old_ctx, &pcb->context);
-    if (result == -1) {
-        perror("swapcontext");
+    /* Reset our alarm "interrupt" to fire again in 1 second: */
+    alarm(1);
+
+    /* Tell the process to run */
+    int ret = kill(pcb->pid, SIGCONT);
+    if (ret == -1) {
+        perror("context_switch");
+        fprintf(stderr, "Tried to context switch to an invalid process!"
+                " Exiting.\n");
+        exit(EXIT_FAILURE);
     }
-    return;
-}
-
-/**
- * Utility function to retrieve the current PCB.
- */
-struct process_ctl_block *current_pcb(void)
-{
-    return &g_sstate.pcbs[g_sstate.current_process];
 }
 
 /**
  * Iterates through the list of process control blocks and checks for "arriving"
  * processes. Since we load the entire list of process executions at the start
  * of the program, we're just checking to see if a given process was supposed to
- * be created during the current quantum. If it was, we move it to the waiting
- * state and create its execution context.
+ * be created during the current quantum. If it was, we need to:
+ * - Change it from CREATED to WAITING state
+ * - Fork a new process
+ * - Execute it with the appropriate parameters (name and workload size).
  */
 void handle_arrivals(void)
 {
     int i;
-    for (i = 0; i < g_sstate.num_processes; ++i) {
-        if (g_sstate.pcbs[i].creation_quantum == g_sstate.current_quantum) {
-            struct process_ctl_block *pcb = &g_sstate.pcbs[i];
+    for (i = 0; i < g_scheduler.num_processes; ++i) {
+        if (g_scheduler.pcbs[i].creation_quantum == g_scheduler.current_quantum) {
+            struct process_ctl_block *pcb = &g_scheduler.pcbs[i];
             pcb->state = WAITING;
             pcb->arrival_time = get_time();
 
-            getcontext(&pcb->context);
-            pcb->context.uc_stack.ss_sp = pcb->stack;
-            pcb->context.uc_stack.ss_size = sizeof(pcb->stack);
-            pcb->context.uc_link = &g_main_ctx;
-            makecontext(&pcb->context, process, 0);
             printf("[*] New process arrival: %s\n", pcb->name);
+            pid_t child = fork();
+            if (child == -1) {
+                perror("fork");
+                exit(EXIT_FAILURE);
+            } else if (child == 0) {
+                /* First, stop the child before we execute anything: */
+                kill(getpid(), SIGSTOP);
+
+                char workload_buf[128];
+                snprintf(workload_buf, 128, "%d", pcb->workload);
+                int retval = execl(
+                        "process",
+                        "process", pcb->name, workload_buf, (char *) 0);
+                if (retval == -1) {
+                    perror("exec");
+                }
+                exit(1);
+            } else {
+                pcb->pid = child;
+                printf("[i] '%s' [pid=%d] created. Workload = %ds\n",
+                        pcb->name, child, pcb->workload);
+            }
         }
     }
 }
 
 /**
- * We use a SIGALRM signal to emulate our interrupt. The process works like
- * this:
- * - We set an alarm to fire in one second: alarm(1)
- * - The alarm occurs, calling this signal handler
- * - We set g_interrupt to true to cause the currently-running process to stop
- *   and call interrupt_handler().
- *
- * Input:
- *  - signo: the signal number being handled. Should be SIGALRM.
+ * This signal handler is very minimal: it records the numeric identifier of the
+ * signal that was received. The reason for this is simple: you are technically
+ * *NOT* supposed to do work in a signal handler, and many functions are not
+ * safe to use here. Instead, we set this flag and handle interrupt logic in
+ * from our main loop.
  */
 void signal_handler(int signo)
 {
-    assert(signo == SIGALRM);
-    g_interrupt = true;
+    g_interrupted = signo;
 }
 
 /**
  * Upon receipt of an interrupt, this function updates the current process
  * state, handles any new process arrivals, and then calls the scheduling logic
- * (a function pointed to by g_scheduling_algo).
+ * (a function pointed to by g_scheduling_algorithm).
  */
 void interrupt_handler(void)
 {
-    g_interrupt = false;
-    printf(" -> interrupt (%d)\n", g_sstate.current_quantum);
+    if (g_interrupted == SIGCHLD) {
+        /* A child process terminated, stopped, or continued. We aren't
+         * interested in the last two states, so we need to check whether the
+         * child terminated or not.*/
+        int status;
+        pid_t child = waitpid(-1, &status, WNOHANG);
+        if (child == 0 || child == -1) {
+            g_interrupted = 0;
+            return;
+        }
 
-    /* The process was interrupted, so we should change its state back to
-     * waiting. */
-    if (current_pcb()->state == RUNNING) {
-        current_pcb()->state = WAITING;
-    }
-
-    handle_arrivals();
-
-    g_scheduling_algo(&g_sstate);
-}
-
-/**
- * Simulates process execution and prints progress.
- */
-void process(void)
-{
-    struct process_ctl_block *pcb = current_pcb();
-    pcb->start_time = get_time();
-    printf("[>] PID %d starting ('%s', workload: %d)\n",
-            pcb->pid, pcb->name, pcb->workload);
-
-    while (pcb->executed_work < pcb->workload) {
-        int i;
-        for (i = 0; i < 20; ++i) {
-            RUN_WORKLOAD(g_workload_clocks / 20);
-            int perc = 100 * ((float) pcb->executed_work / pcb->workload);
-            printf("\r%s [%s%s] %3d%%",
-                    pcb->name,
-                    &hashes[20 - perc / 5],
-                    &spaces[perc / 5], perc);
-            fflush(stdout);
-            if (g_interrupt) {
-                interrupt_handler();
+        /* A child terminated if waitpid() returned a PID. Now we need to
+         * find the PCB corresponding to this PID. */
+        struct process_ctl_block *pcb = NULL;
+        for (int i = 0; i < g_scheduler.num_processes; ++i) {
+            if(g_scheduler.pcbs[i].pid == child) {
+                pcb = &g_scheduler.pcbs[i];
+                break;
             }
         }
-        pcb->executed_work++;
+
+        if (pcb != NULL) {
+            /* Disable any active alarm; the process already quit, so we
+             * don't need to worry about interrupting it */
+            alarm(0);
+
+            pcb->state = TERMINATED;
+            pcb->completion_time = get_time();
+            g_interrupted = SIGALRM;
+        }
     }
 
-    int perc = 100;
-    printf("\r%s [%s%s] %3d%%",
-            pcb->name,
-            &hashes[20 - perc / 5],
-            &spaces[perc / 5], perc);
-    pcb->state = TERMINATED;
-    pcb->completion_time = get_time();
-    printf(" -> terminated");
+    if (g_interrupted == SIGALRM) {
+        /* Time quantum has expired */
+
+        g_interrupted = 0;
+        printf("\t-> interrupt (%d)\n", g_scheduler.current_quantum);
+
+        /* The process was interrupted, so we should change its state back to
+         * waiting. */
+        if (g_scheduler.current_process != NULL
+                && g_scheduler.current_process->state == RUNNING) {
+            /* Tell the process to stop running: */
+            kill(g_scheduler.current_process->pid, SIGSTOP);
+
+            /* Put it back in the wait state: */
+            g_scheduler.current_process->state = WAITING;
+        }
+
+        handle_arrivals();
+
+        g_scheduling_algorithm(&g_scheduler);
+    }
 }
 
 /**
@@ -209,7 +189,7 @@ void basic(struct scheduler_state *sched_state)
     for (i = 0; i < sched_state->num_processes; ++i) {
         struct process_ctl_block *pcb = &sched_state->pcbs[i];
         if(pcb->state == WAITING) {
-            context_switch(i);
+            context_switch(pcb);
             return;
         }
     }
@@ -218,39 +198,40 @@ void basic(struct scheduler_state *sched_state)
 int main(int argc, char *argv[])
 {
     if (argc != 2) {
-        printf("Usage: %s <process-spec>\n", argv[0]);
+        printf("Usage: %s <process-specification>\n", argv[0]);
         return 1;
     }
 
-    read_spec(argv[1], &g_sstate);
-
-    g_workload_clocks = calibrate_workload();
+    read_spec(argv[1], &g_scheduler);
 
     /* Set up our interrupt. Instead of a hardware interrupt, we'll be using
      * signals, a type of software interrupt. It will fire every 1 second. */
     signal(SIGALRM, signal_handler);
+    signal(SIGCHLD, signal_handler);
 
-    g_scheduling_algo = &basic;
+    g_scheduling_algorithm = &basic;
+    fprintf(stderr, "[i] Ready to start\n");
 
-    struct scheduler_state *sched_state = &g_sstate;
+    while (true) {
+        if (g_interrupted != 0) {
+            interrupt_handler();
+        }
 
-    printf("Starting execution ");
-    getcontext(&g_main_ctx);
-    bool finished = false;
-    while (!finished) {
-        interrupt_handler();
-        if (g_sstate.num_processes > 0) {
-            finished = true;
-            int i;
-            for (i = 0; i < g_sstate.num_processes; ++i) {
-                if (g_sstate.pcbs[i].state != TERMINATED) {
-                    finished = false;
-                }
+        int terminated = 0;
+        for (int i = 0; i < g_scheduler.num_processes; ++i) {
+            if (g_scheduler.pcbs[i].state == TERMINATED) {
+                terminated++;
             }
         }
+        if (terminated == g_scheduler.num_processes) {
+            /* All processes have terminated */
+            break;
+        }
+
+        /* Stop execution until we receive a signal: */
+        pause();
     }
 
-    printf("\n\nExecution complete.\n");
-
+    printf("\nExecution complete.\n");
     return 0;
 }

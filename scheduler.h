@@ -1,7 +1,7 @@
 #ifndef _SCHEDULER_H_
 #define _SCHEDULER_H_
 
-#include <ucontext.h>
+#include <unistd.h>
 
 /* Preprocessor Directives */
 #define NUM_PROCESSES 100
@@ -24,17 +24,12 @@ enum process_state {
  * - timing information
  */
 struct process_ctl_block {
-    unsigned int pid;
+    pid_t pid;
     char name[128];
     enum process_state state;
 
-    /* Process context information */
-    char stack[STACK_SIZE];
-    ucontext_t context;
-
     unsigned int creation_quantum; /* The time slice when process is created */
     unsigned int workload; /* How much work this process will do in total */
-    unsigned int executed_work; /* How much work has been done */
     unsigned int priority;
 
     /* Wall clock times: */
@@ -55,21 +50,18 @@ struct scheduler_state {
     /* Current scheduling quantum, used to determine when tasks arrive. */
     unsigned int current_quantum;
 
-    /* Current running process ID */
-    unsigned int current_process;
+    /* Current running process */
+    struct process_ctl_block *current_process;
 
     /* Array of process control blocks for the processes managed by the
      * scheduler.*/
     struct process_ctl_block pcbs[NUM_PROCESSES];
 };
 
-/* Function Prototypes */
-void context_switch(int);
-struct process_ctl_block *current_pcb(void);
+void context_switch(struct process_ctl_block *);
 double get_time();
 void handle_arrivals(void);
 void interrupt_handler(void);
-void process(void);
 void signal_handler(int);
 
 #endif

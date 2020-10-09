@@ -20,7 +20,7 @@
 #include <stdlib.h>
 
 /**
- * Reads a process specification file and populates the scheduler state strut
+ * Reads a process specification file and populates the scheduler state struct
  * with the processes.
  */
 void read_spec(char *file, struct scheduler_state *sstate)
@@ -28,6 +28,11 @@ void read_spec(char *file, struct scheduler_state *sstate)
     fprintf(stderr, "Reading process specification: %s\n", file);
     const unsigned int line_sz = 1024;
     FILE *fp = fopen(file, "r");
+    if (fp == NULL) {
+        perror("fopen");
+        return;
+    }
+
     char line[1024] = { 0 };
     while (fgets(line, 1024, fp) != NULL) {
         int i;
@@ -77,7 +82,8 @@ void read_spec(char *file, struct scheduler_state *sstate)
         tok = next_token(&next_tok, ", \t\n");
         pcb->priority = atoi(tok);
 
-        fprintf(stderr, "Created process: %s\n", pcb->name);
+        fprintf(stderr, "[i] Generating process control block: %s\n",
+                pcb->name);
         sstate->num_processes++;
     }
 }
