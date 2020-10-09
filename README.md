@@ -50,34 +50,27 @@ You will print:
 ...at the end of the program's execution. Here's an example run of the program below:
 
 ```
-$ ./scheduler fifo processes2.txt
-Reading process specification: processes2.txt
-Created process: Process_A
-Created process: Process_B
-Created process: Process_C
-Calibrating workload...
-42949672 -> 0.18s
-85899344 -> 0.23s
-171798688 -> 0.46s
-92529623 -> 0.34s
-Starting execution  -> interrupt (0)
+$ ./scheduler ./specifications/processes2.txt
+Reading process specification: ./specifications/processes2.txt
+[i] Generating process control block: Process_A
+[i] Generating process control block: Process_B
+[i] Generating process control block: Process_C
+[i] Ready to start
+        -> interrupt (0)
 [*] New process arrival: Process_A
+[i] 'Process_A' [pid=4842] created. Workload = 3s
 [*] New process arrival: Process_B
+[i] 'Process_B' [pid=4843] created. Workload = 1s
 [*] New process arrival: Process_C
-[i] Context switch: PID 0 -> PID 0
-[>] PID 0 starting ('Process_A', workload: 15)
-Process_A [####                ]  20% -> interrupt (1)
-Process_A [#########           ]  46% -> interrupt (2)
-Process_A [##############      ]  73% -> interrupt (3)
-Process_A [####################] 100% -> terminated -> interrupt (4)
-[i] Context switch: PID 0 -> PID 1
-[>] PID 1 starting ('Process_B', workload: 5)
-Process_B [############        ]  60% -> interrupt (5)
-Process_B [####################] 100% -> terminated -> interrupt (6)
-[i] Context switch: PID 1 -> PID 2
-[>] PID 2 starting ('Process_C', workload: 5)
-Process_C [############        ]  60% -> interrupt (7)
-Process_C [####################] 100% -> terminated
+[i] 'Process_C' [pid=4844] created. Workload = 1s
+Process_A [######--------------] 30.0%  -> interrupt (1)
+Process_A [############--------] 63.3%  -> interrupt (2)
+Process_A [###################-] 96.7%  -> interrupt (3)
+Process_A [####################] 100.0% -> interrupt (4)
+Process_B [##################--] 90.0%  -> interrupt (5)
+Process_B [####################] 100.0% -> interrupt (6)
+Process_C [##################--] 90.0%  -> interrupt (7)
+Process_C [####################] 100.0% -> interrupt (8)
 
 Execution complete. Summary:
 ----------------------------
