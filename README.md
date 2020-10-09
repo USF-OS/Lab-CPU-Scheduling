@@ -25,9 +25,6 @@ The shortest process is run next, based on workload size. If a new process arriv
 ### PSJF - Preemptive Shortest Job First 
 Similar to SJF, but with preemption. If a task with a smaller overall workload arrives, you will switch to it and run it instead.
 
-### SCTF - Shortest Completion Time First
-Building on PSJF, SCTF considers the remaining amount of workload rather than the total workload for the job. For example, if the current job has a workload of 10 but has already executed 8/10 work units, a new task with a workload of 3 arriving will not cause a context switch.
-
 ### RR - Round Robin
 Each process gets a turn. Every time you receive an interrupt, switch to the next process in the list. Once you hit the end of the list, start back at the beginning.
 
@@ -35,7 +32,7 @@ Each process gets a turn. Every time you receive an interrupt, switch to the nex
 The process with the highest priority is run next. If two processes have the same priority, then switch between them round robin style.
 
 ### Insanity
-Choose a random number. That PID gets to run (unless it has terminated).
+Choose a random number to determine what process to run.
 
 
 ## Algorithm Selector
